@@ -1,0 +1,204 @@
+=== Background ===
+Scikit-image is a high-performance image processing project, part of the larger scikit project.
+This particular module is implemented in pure python. You are going to implement a fix to
+the skimage.feature.peak_local_max function. The min_distance parameter is meant to guarantee
+that two peaks returned from a single call are always at least min_distance pixels apart.
+This achieved using the same square neighborhood method already used by the function to
+decide what counts as a "local" peak. 
+
+In other words, no two peaks returned by the function peak_local_max may differ less than
+min_distance pixels in any single axis (the max absolute difference across axes, not the Euclidian distance)
+
+=== The problem ===
+This guarantee currently holds when peaks have strictly different intensities: a smaller nearby peak
+is correctly suppressed by the more intense nearby peak. However, it does not hold when two or
+more candidate peaks are tied at the same (locally maximal) intensity, within min_distance from each other.
+In such cases, all equal-intensity peaks are returned, regardless of how close together they are.
+
+The described failure can be reproduced by running the following script:
+
+```
+import numpy as np
+from skimage.feature import peak_local_max
+
+image = np.zeros((30, 60))
+image[15, 20:41] = 5.0  # 21 pixels, all tied at the image's max value
+
+coords = peak_local_max(image, min_distance=10)
+print(len(coords))  # currently 21 — one "peak" per plateau pixel, some 1 pixel apart
+``` 
+For contrast, `image[15, 30] = 5.0; image[15, 32] = 3.0` with the same `min_distance=10` already correctly returns only `[15, 30]` today — the bug is specific to ties, not distance-checking in general.
+```
+
+=== Environment setup ===
+In order to verify the correctness of your solution, you have to run the automatic test suite.
+To achieve this, you will have to install dependencies, run tests, and eventually build the project. 
+These steps can be achieved using the following commands. More information is provided in the 
+readme's in the project. You should base your solution off of python3.10
+
+```
+# prepare a virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# install dependencies
+pip install "setuptools==59.8.0" "numpy==1.23.5" "scipy==1.9.3" "Cython==0.29.36" wheel
+# install project-specified dependencies
+pip install -r requirements/default.txt -r requirements/test.txt
+
+# building the project
+python3 setup.py build_ext --inplace -j 2
+
+# running tests. Note: you may also have to set the following environment variable
+# to suppress irrelevant test failures:
+export SKIMAGE_TEST_STRICT_WARNINGS=0
+python3 -m pytest skimage/feature/tests/test_peak.py -v
+# this runs only the tests defined for the peak_local_max function. Running other project tests can be done using
+python3 -m pytest skimage -q
+```
+
+=== Your task ===
+Fix peak_local_max so that no two coordinates it returns are ever closer than `min_distance` apart (by the metric above), including when the tied maximal value is shared by more than one candidate location. When several candidates are tied within `min_distance` of each other, it does not matter which single one of them is kept — any one representative is acceptable — but that cluster must still contribute exactly one peak to the result; it must not be dropped entirely.
+
+The fix must preserve all currently correct behavior:
+- A strictly lower-intensity candidate within `min_distance` of a strictly higher one must remain suppressed, as it is today.
+- `num_peaks`, `threshold_abs`, `threshold_rel`, and `exclude_border` must continue to behave exactly as they do today.
+- The `labels` parameter must continue to restrict peak search to each labeled region as it does today.
+- The function must continue to work correctly for images of any dimensionality it currently supports, not only 2D.
+- The public function signature (parameter names, order, and defaults) must not change.
+
+Testing policy:
+- See above for how to run the tests defined for the subject function, as well as all tests in the project.
+- It is ok for not all tests to pass after you are done. You are, after all, modifying behavior from the currently tested behavior suite.
+
+
+=== Permissible test failures, unrelated to the problem ===
+FAILED skimage/_shared/tests/test_utils.py::test_change_default_value - TypeE...
+FAILED skimage/_shared/tests/test_utils.py::test_deprecated_kwarg - TypeError...
+FAILED skimage/_shared/tests/test_utils.py::test_remove_argument - TypeError:...
+FAILED skimage/data/tests/test_data.py::test_download_all_with_pooch - ValueE...
+FAILED skimage/data/tests/test_data.py::test_eagle - ValueError: SHA256 hash ...
+FAILED skimage/feature/tests/test_blob.py::test_blob_log_no_warnings - TypeEr...
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_contrast - Attri...
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_correlation - At...
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_dissimilarity - ...
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_dissimilarity_2
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_energy - Attribu...
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_error_raise_float
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_error_raise_int_types
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_error_raise_levels_smaller_max
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_error_raise_negative
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_homogeneity - At...
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_image_data_types
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_invalid_property
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_normed_symmetric
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_output_angles - ...
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_output_empty - A...
+FAILED skimage/feature/tests/test_texture.py::TestGLCM::test_output_symmetric_1
+FAILED skimage/feature/tests/test_texture.py::TestLBP::test_default - Attribu...
+FAILED skimage/feature/tests/test_texture.py::TestLBP::test_nri_uniform - Att...
+FAILED skimage/feature/tests/test_texture.py::TestLBP::test_ror - AttributeEr...
+FAILED skimage/feature/tests/test_texture.py::TestLBP::test_uniform - Attribu...
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[autolevel]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[autolevel_percentile]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[enhance_contrast]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[enhance_contrast_percentile]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[entropy]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[equalize]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[geometric_mean]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[gradient]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[gradient_percentile]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[majority]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[maximum]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[mean]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[mean_bilateral]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[mean_percentile]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[median]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[minimum]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[modal]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[noise_filter]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[otsu]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[percentile]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[pop]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[pop_bilateral]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[pop_percentile]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[subtract_mean]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[subtract_mean_percentile]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[sum]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[sum_bilateral]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[sum_percentile]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[threshold]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[threshold_percentile]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filter[windowed_histogram]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[autolevel]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[enhance_contrast]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[entropy]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[equalize]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[geometric_mean]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[gradient]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[majority]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[maximum]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[mean]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[median]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[minimum]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[modal]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[noise_filter]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[otsu]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[pop]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[subtract_mean]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[sum]
+FAILED skimage/filters/rank/tests/test_rank.py::TestRank::test_rank_filters_3D[threshold]
+FAILED skimage/filters/tests/test_median.py::test_median_warning[constant-0.0-rank-1-warning_type1]
+FAILED skimage/filters/tests/test_median.py::test_median_warning[nearest-0.0-ndimage-0-warning_type0]
+FAILED skimage/filters/tests/test_median.py::test_median_warning[nearest-0.0-ndimage-0-warning_type3]
+FAILED skimage/filters/tests/test_median.py::test_median_warning[nearest-0.0-rank-0-warning_type2]
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_isodata
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_li
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_li_float_image
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_li_negative_int
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_minimum
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_otsu
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_otsu_float_image
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_otsu_negative_int
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_threshold_local_gaussian
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_threshold_local_mean
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_threshold_local_median
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_threshold_local_median_constant_mode
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_threshold_niblack
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_threshold_niblack_iterable_window_size
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_threshold_sauvola
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_threshold_sauvola_iterable_window_size
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_try_all_threshold
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_yen
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_yen_float_image
+FAILED skimage/filters/tests/test_thresholding.py::TestSimpleImage::test_yen_negative_int
+FAILED skimage/future/graph/tests/test_rag.py::test_cut_normalized - Attribut...
+FAILED skimage/future/graph/tests/test_rag.py::test_ncut_stable_subgraph - At...
+FAILED skimage/future/graph/tests/test_rag.py::test_reproducibility - Attribu...
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixer::test_gamma - Attr...
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixer::test_hsv_add - At...
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixer::test_hsv_add_clip_neg
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixer::test_hsv_add_clip_pos
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixer::test_hsv_mul - At...
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixer::test_hsv_mul_clip_neg
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixer::test_sigmoid - At...
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerAdd::test_basic - A...
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerAdd::test_clip - At...
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerAdd::test_negative
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerAdd::test_negative_clip
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerBright::test_brightness_neg
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerBright::test_brightness_neg_clip
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerBright::test_brightness_pos
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerBright::test_brightness_pos_clip
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerMul::test_basic - A...
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerMul::test_clip - At...
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerMul::test_negative
+FAILED skimage/io/tests/test_colormixer.py::TestColorMixerMul::test_negative_clip
+FAILED skimage/io/tests/test_imageio.py::test_imageio_truncated_jpg - OSError...
+FAILED skimage/io/tests/test_pil.py::test_extreme_palette - ValueError: canno...
+FAILED skimage/io/tests/test_pil.py::test_imread_index_png_with_alpha - Value...
+FAILED skimage/io/tests/test_tifffile.py::test_tifffile_kwarg_passthrough - T...
+FAILED skimage/measure/tests/test_ccomp.py::TestConnectedComponents3d::test_basic
+FAILED skimage/measure/tests/test_ccomp.py::TestConnectedComponents::test_basic
+FAILED skimage/segmentation/tests/test_boundaries.py::test_mark_boundaries_subpixel
+FAILED skimage/segmentation/tests/test_felzenszwalb.py::test_3D - AssertionEr...
