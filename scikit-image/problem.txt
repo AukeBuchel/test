@@ -6,7 +6,7 @@ fix to the skimage.feature.peak_local_max function.
 The min_distance parameter is meant to guarantee that any two peaks returned from a single
 call are always at least min_distance pixels apart. Concretely: for any two coordinates the
 function returns, the largest absolute difference taken over the individual axes must be at
-least min_distance. (This is the Chebyshev / L-infinity distance.
+least min_distance. (This is the Chebyshev / L-infinity distance).
 
 === The problem ===
 This guarantee is not always upheld. The following script reproduces a violation:

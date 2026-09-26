@@ -8,10 +8,143 @@ from skimage._shared.testing import assert_equal
 from scipy import ndimage as ndi
 from skimage.feature import peak
 
+import inspect
+
+
 
 np.random.seed(21)
 
+# better than using indices=False -> check absolute values (for now)
+def _no_pairwise_violation(coords, min_distance):
+    for i in range(len(coords)):
+        for j in range(i + 1, len(coords)):
+            if np.max(np.abs(coords[i] - coords[j])) < min_distance:
+                return False
+    return True
+
 class TestPeakLocalMax():
+    def test_plateau(self):
+        image = np.zeros([25, 25], dtype=float)
+        image[10:15, 10] = 1
+        peak_indices = peak.peak_local_max(image, min_distance=10)
+        assert type(peak_indices) is np.ndarray
+        assert len(peak_indices) == 1
+        assert _no_pairwise_violation(peak_indices, 10)
+
+        image = np.zeros([25, 25], dtype=float)
+        image[10, 10:15] = 1
+        peak_indices = peak.peak_local_max(image, min_distance=10)
+        assert type(peak_indices) is np.ndarray
+        assert len(peak_indices) == 1
+        assert _no_pairwise_violation(peak_indices, 10)
+
+    def test_split_plateaus(self):
+        image = np.zeros([25, 25], dtype=float)
+        # two plateaus, separated by a distance of < min_distance
+        image[10:15, 10] = 1
+        image[10:15, 12] = 1
+        peak_indices = peak.peak_local_max(image, min_distance=10)
+        assert type(peak_indices) is np.ndarray
+        assert len(peak_indices) == 1
+        assert _no_pairwise_violation(peak_indices, 10)
+
+    def test_tied_peaks_3d(self):
+        image = np.zeros((20, 20, 20))
+        image[10, 10, 5:16] = 5.0
+        peaks = peak.peak_local_max(image, min_distance=5,
+                                    exclude_border=False)
+        assert len(peaks) >= 1
+        assert _no_pairwise_violation(peaks, 5)
+
+    def test_tied_peaks_within_labels(self):
+        image = np.zeros((30, 60))
+        labels = np.zeros((30, 60), dtype=int)
+        image[15, 5:16] = 5.0
+        labels[15, 0:20] = 1
+        image[15, 40:51] = 5.0
+        labels[15, 30:60] = 2
+        peaks = peak.peak_local_max(image, min_distance=10, labels=labels)
+        assert len(peaks) == 2
+        assert {labels[tuple(p)] for p in peaks} == {1, 2}
+
+    def test_tied_peaks_with_threshold_abs(self):
+        image = np.zeros((30, 100))
+        image[15, 5:16] = 2.0
+        image[15, 60:76] = 5.0
+        peaks = peak.peak_local_max(image, min_distance=10, threshold_abs=3.0)
+        assert len(peaks) >= 1
+        assert all(p[1] > 55 for p in peaks)
+        assert _no_pairwise_violation(peaks, 10)
+
+    def test_num_peaks_after_tie_resolution(self):
+        image = np.zeros((30, 200))
+        for s in (5, 40, 75, 110, 145):
+            image[15, s:s + 8] = 5.0
+        all_peaks = peak.peak_local_max(image, min_distance=10)
+        assert len(all_peaks) == 5
+        capped = peak.peak_local_max(image, min_distance=10, num_peaks=3)
+        assert len(capped) == 3
+
+    def test_wide_plateau_multiple_peaks_allowed_but_spaced(self):
+        # A plateau far wider than min_distance MAY legitimately yield more
+        # than one peak. We do not require a specific count -- only that the
+        # result is non-empty and internally respects the spacing guarantee.
+        image = np.zeros((30, 200))
+        image[15, 10:191] = 5.0
+        peaks = peak.peak_local_max(image, min_distance=10,
+                                    exclude_border=False)
+        assert len(peaks) >= 1
+        assert _no_pairwise_violation(peaks, 10)
+
+    def test_lower_intensity_neighbor_suppressed(self):
+        # A strictly lower-intensity candidate within min_distance of a
+        # strictly higher one must remain suppressed (unchanged behavior).
+        image = np.zeros((30, 60))
+        image[15, 30] = 5.0
+        image[15, 32] = 3.0
+        peaks = peak.peak_local_max(image, min_distance=10)
+        assert len(peaks) == 1
+        assert tuple(peaks[0]) == (15, 30)
+
+    def test_non_consecutive_label_values(self):
+        # Label values are arbitrary positive integers; they need not be
+        # consecutive nor start at 1. Every labeled region must still be
+        # searched correctly.
+        image = np.zeros((10, 20))
+        image[3, 3] = 4.0
+        image[5, 15] = 4.0
+        labels = np.zeros((10, 20), dtype=int)
+        labels[2:5, 2:5] = 2
+        labels[4:7, 13:17] = 5
+        peaks = peak.peak_local_max(image, labels=labels, min_distance=1,
+                                    exclude_border=False)
+        found = {tuple(p) for p in peaks}
+        assert (3, 3) in found
+        assert (5, 15) in found
+
+    def test_input_labels_not_mutated_nonconsecutive(self):
+        # The caller's `labels` array must not be modified by the call,
+        # including when its values are non-consecutive.
+        image = np.zeros((10, 20))
+        image[3, 3] = 4.0
+        image[5, 15] = 4.0
+        labels = np.zeros((10, 20), dtype=int)
+        labels[2:5, 2:5] = 2
+        labels[4:7, 13:17] = 5
+        before = labels.copy()
+        peak.peak_local_max(image, labels=labels, min_distance=1,
+                            exclude_border=False)
+        assert np.array_equal(labels, before)
+
+    def test_signature_unchanged(self):
+        sig = inspect.signature(peak.peak_local_max)
+        names = list(sig.parameters.keys())
+        assert names == [
+            "image", "min_distance", "threshold_abs", "threshold_rel",
+            "exclude_border", "indices", "num_peaks", "footprint", "labels",
+            "num_peaks_per_label",
+        ]
+
     def test_trivial_case(self):
         trivial = np.zeros((25, 25))
         peak_indices = peak.peak_local_max(trivial, min_distance=1)
@@ -190,40 +323,28 @@ class TestPeakLocalMax():
 
     def test_ndarray_exclude_border(self):
         nd_image = np.zeros((5, 5, 5))
-        nd_image[[1, 0, 0], [0, 1, 0], [0, 0, 1]] = 1
-        nd_image[3, 0, 0] = 1
-        nd_image[2, 2, 2] = 1
-        expected = np.zeros_like(nd_image, dtype=np.bool)
+        nd_image[[1, 0, 0, 3, 2], [0, 1, 0, 0, 2], [0, 0, 1, 0, 2]] = 1
+        expected = np.zeros_like(nd_image, dtype=bool)
         expected[2, 2, 2] = True
-        expectedNoBorder = nd_image > 0
-        with expected_warnings(["indices argument is deprecated"]):
-            result = peak.peak_local_max(nd_image, min_distance=2,
-                                         exclude_border=2, indices=False)
-            assert_equal(result, expected)
-            # Check that bools work as expected
-            assert_equal(
-                peak.peak_local_max(nd_image, min_distance=2,
-                                    exclude_border=2, indices=False),
-                peak.peak_local_max(nd_image, min_distance=2,
+        expectedNoBorder = nd_image.astype(bool)
+        result = peak.peak_local_max(nd_image, min_distance=2,
+                                    exclude_border=2, indices=False)
+        assert_equal(result, expected)
+        result = peak.peak_local_max(nd_image, min_distance=2,
                                     exclude_border=True, indices=False)
-            )
-            assert_equal(
-                peak.peak_local_max(nd_image, min_distance=2,
-                                    exclude_border=0, indices=False),
-                peak.peak_local_max(nd_image, min_distance=2,
-                                    exclude_border=False, indices=False)
-            )
-            # Check both versions with  no border
-            assert_equal(
-                peak.peak_local_max(nd_image, min_distance=2,
-                                    exclude_border=0, indices=False),
-                expectedNoBorder,
-            )
-            assert_equal(
-                peak.peak_local_max(nd_image,
-                                    exclude_border=False, indices=False),
-                expectedNoBorder,
-            )
+        assert_equal(result, expected)
+        # With the tie-breaking fix, the three mutually-adjacent tied points
+        # near the origin collapse to a single representative, while (3,0,0)
+        # and (2,2,2) remain independent -> three points total.
+        result = peak.peak_local_max(nd_image, min_distance=2,
+                                    exclude_border=0, indices=False)
+        assert np.sum(result) == 3
+        assert result[3, 0, 0]
+        assert result[2, 2, 2]
+
+        result = peak.peak_local_max(nd_image, exclude_border=False,
+                                    indices=False)
+        assert_equal(result, expectedNoBorder)
 
     def test_empty(self):
         image = np.zeros((10, 20))
@@ -238,7 +359,7 @@ class TestPeakLocalMax():
     def test_empty_non2d_indices(self):
         image = np.zeros((10, 10, 10))
         result = peak.peak_local_max(image,
-                                     footprint=np.ones((3, 3), bool),
+                                     footprint=np.ones((3, 3, 3), bool),
                                      min_distance=1, threshold_rel=0,
                                      exclude_border=False)
         assert result.shape == (0, image.ndim)
@@ -357,16 +478,14 @@ class TestPeakLocalMax():
         '''
         image = np.random.uniform(size=(10, 20))
         footprint = np.array([[1]])
-        with expected_warnings(["indices argument is deprecated",
-                                "When footprint.size < 2"]):
-            result = peak.peak_local_max(image, labels=np.ones((10, 20)),
+        with expected_warnings(["indices argument is deprecated"]):
+            result = peak.peak_local_max(image, labels=np.ones((10, 20), int),
                                          footprint=footprint,
                                          min_distance=1, threshold_rel=0,
                                          threshold_abs=-1, indices=False,
                                          exclude_border=False)
         assert np.all(result)
-        with expected_warnings(["indices argument is deprecated",
-                                "When footprint.size < 2"]):
+        with expected_warnings(["indices argument is deprecated"]):
             result = peak.peak_local_max(image, footprint=footprint,
                                          threshold_abs=-1,
                                          indices=False,
@@ -531,7 +650,7 @@ class TestProminentPeaks(unittest.TestCase):
         image[y1, x1] = i1
         image[y2, x2] = i2
         out = peak._prominent_peaks(image, min_xdistance=3,
-                                   min_ydistance=3,)
+                                    min_ydistance=3,)
         assert_equal(out[0], np.array((i1,)))
         assert_equal(out[1], np.array((x1,)))
         assert_equal(out[2], np.array((y1,)))

@@ -42,6 +42,113 @@ def _get_peak_mask(image, min_distance, footprint, threshold_abs,
     return mask
 
 
+def _ensure_spacing(coord, image, min_distance):
+    """
+    Enforce min_distance spacing constraint by suppressing peaks that are too close.
+    
+    For peaks with different intensities, higher intensity peaks suppress lower ones
+    within min_distance. For peaks with equal intensities that are within min_distance,
+    they are grouped into connected components and one representative is kept per component.
+    """
+    if len(coord) == 0:
+        return coord
+    
+    if len(coord) == 1:
+        return coord
+    
+    # Get intensities for all coordinates
+    intensities = image[tuple(coord.T)]
+    
+    # Group by intensity level
+    unique_intensities = np.unique(intensities)[::-1]  # Highest first
+    
+    output = []
+    suppressed = np.zeros(len(coord), dtype=bool)
+    
+    for intensity_level in unique_intensities:
+        # Get all peaks at this intensity level
+        level_mask = intensities == intensity_level
+        level_indices = np.where(level_mask)[0]
+        level_coords = coord[level_indices]
+        
+        # Check which peaks at this level are already suppressed by higher-intensity peaks
+        for idx in level_indices:
+            if suppressed[idx]:
+                continue
+                
+            current_peak = coord[idx]
+            
+            # Check if suppressed by any already-accepted higher-intensity peak
+            is_suppressed = False
+            for accepted_peak in output:
+                if np.max(np.abs(current_peak - accepted_peak)) < min_distance:
+                    is_suppressed = True
+                    break
+            
+            if is_suppressed:
+                suppressed[idx] = True
+        
+        # For remaining peaks at this level, find connected components
+        # (peaks within min_distance form components)
+        remaining_level_indices = [i for i in level_indices if not suppressed[i]]
+        
+        if len(remaining_level_indices) == 0:
+            continue
+        
+        remaining_coords = coord[remaining_level_indices]
+        
+        # Use connected components to group peaks that are close together
+        n_remaining = len(remaining_coords)
+        adjacency = np.zeros((n_remaining, n_remaining), dtype=bool)
+        
+        for i in range(n_remaining):
+            for j in range(i + 1, n_remaining):
+                dist = np.max(np.abs(remaining_coords[i] - remaining_coords[j]))
+                if dist < min_distance:
+                    adjacency[i, j] = True
+                    adjacency[j, i] = True
+        
+        # Find connected components using simple flood fill
+        component_labels = -np.ones(n_remaining, dtype=int)
+        current_component = 0
+        
+        for i in range(n_remaining):
+            if component_labels[i] == -1:
+                # Start new component
+                stack = [i]
+                component_labels[i] = current_component
+                
+                while stack:
+                    node = stack.pop()
+                    for neighbor in range(n_remaining):
+                        if adjacency[node, neighbor] and component_labels[neighbor] == -1:
+                            component_labels[neighbor] = current_component
+                            stack.append(neighbor)
+                
+                current_component += 1
+        
+        # Keep one representative from each component (lexicographically first)
+        for component_id in range(current_component):
+            component_mask = component_labels == component_id
+            component_coords_indices = np.where(component_mask)[0]
+            component_coords = remaining_coords[component_coords_indices]
+            
+            # Pick the lexicographically first coordinate
+            lex_order = np.lexsort(component_coords.T[::-1])
+            representative_local_idx = lex_order[0]
+            representative_idx = remaining_level_indices[component_coords_indices[representative_local_idx]]
+            
+            output.append(coord[representative_idx])
+            
+            # Mark all others in this component as suppressed
+            for local_idx in component_coords_indices:
+                if local_idx != representative_local_idx:
+                    global_idx = remaining_level_indices[local_idx]
+                    suppressed[global_idx] = True
+    
+    return np.array(output) if output else np.empty((0, coord.shape[1]), dtype=coord.dtype)
+
+
 def _exclude_border(mask, exclude_border):
     """
     Remove peaks near the borders
@@ -219,6 +326,8 @@ def peak_local_max(image, min_distance=1, threshold_abs=None,
 
     # In the case of labels, call ndi on each label
     if labels is not None:
+        # Create a copy to avoid modifying the caller's input
+        labels = labels.copy()
         label_values = np.unique(labels)
         # Reorder label values to have consecutive integers (no gaps)
         if np.any(np.diff(label_values) != 1):
@@ -242,6 +351,9 @@ def peak_local_max(image, min_distance=1, threshold_abs=None,
                 mask &= inner_mask[obj]
             coordinates = _get_high_intensity_peaks(img_object, mask,
                                                     num_peaks_per_label)
+            # Enforce min_distance spacing within this label
+            if min_distance > 0 and len(coordinates) > 0:
+                coordinates = _ensure_spacing(coordinates, img_object, min_distance)
             nd_indices = tuple(coordinates.T)
             mask.fill(False)
             mask[nd_indices] = True
@@ -267,6 +379,10 @@ def peak_local_max(image, min_distance=1, threshold_abs=None,
 
     # Select highest intensities (num_peaks)
     coordinates = _get_high_intensity_peaks(image, mask, num_peaks)
+    
+    # Enforce min_distance spacing
+    if min_distance > 0 and len(coordinates) > 0:
+        coordinates = _ensure_spacing(coordinates, image, min_distance)
 
     if indices is True:
         return coordinates
