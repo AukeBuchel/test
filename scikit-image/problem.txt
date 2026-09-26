@@ -88,8 +88,8 @@ Precise requirements the solution must satisfy:
   that contains one or more qualifying maxima must still contribute at least one
   coordinate to the output and must never be dropped entirely. When several
   qualifying candidates lie within min_distance of one another, it does not matter which single
-  one of them is kept. Any one representative is acceptable. A region larger than min_distance
-  may legitimately contribute more than one coordinate, as long as the spacing guarantee above
+  one of them is kept. Any one representative is acceptable. A region larger than min_distance 
+  contributes more than one coordinate, as long as the spacing guarantee above
   is respected between all returned coordinates.
 - All currently correct behavior must be preserved:
   - A strictly lower-intensity candidate within min_distance of a strictly higher one must

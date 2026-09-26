@@ -1,0 +1,260 @@
+https://github.com/scikit-image/scikit-image
+
+SBD-3 clause
+
+e7466ca5f3299f09efc478ee9127439679f3a5fa
+
+
+
+
+
+=== Background ===
+Scikit-image is a high-performance image processing project, part of the larger scikit
+project. This particular module is implemented in pure python. You are going to implement a
+fix to the skimage.feature.peak_local_max function.
+
+The min_distance parameter is meant to guarantee that any two peaks returned from a single
+call are always at least min_distance pixels apart. Concretely: for any two coordinates the
+function returns, the largest absolute difference taken over the individual axes must be at
+least min_distance. (This is the Chebyshev / L-infinity distance.
+
+=== The problem ===
+This guarantee is not always upheld. The following script reproduces a violation:
+
+```
+import numpy as np
+from skimage.feature import peak_local_max
+
+image = np.zeros((30, 60))
+image[15, 20:41] = 5.0  # a region of pixels all at the image's maximum value
+
+coords = peak_local_max(image, min_distance=10)
+print(len(coords))  # currently 21 -- many of the returned coordinates are only 1 pixel apart,
+                     # far closer than min_distance=10
+```
+
+For contrast, the following input already behaves correctly, and should do so after your fix:
+
+```
+image = np.zeros((30, 60))
+image[15, 30] = 5.0
+image[15, 32] = 3.0
+coords = peak_local_max(image, min_distance=10)   # correctly returns only [[15, 30]]
+```
+
+Peak detection is additionally unreliable when the `labels` argument is used. As one
+symptom, the call modifies the caller's own input array:
+
+```
+img = np.zeros((10, 20))
+img[3, 3] = 4.0
+img[5, 15] = 4.0
+labels = np.zeros((10, 20), int)
+labels[2:5, 2:5] = 2       # label values are arbitrary positive integers;
+labels[4:7, 13:17] = 5     # here they are 2 and 5, not necessarily consecutive or 1-based
+before = labels.copy()
+
+peak_local_max(img, labels=labels, min_distance=1)
+print(np.array_equal(labels, before))   # currently False: the input `labels` array was
+                                         # modified in place as a side effect of the call
+```
+
+=== Environment setup ===
+In order to verify the correctness of your solution, you have to run the automatic test suite.
+To achieve this, you will have to install dependencies, run tests, and eventually build the
+project. These steps can be achieved using the following commands. More information is provided
+in the readme's in the project. You should base your solution off of python3.10
+
+```
+# prepare a virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+# install dependencies
+pip install "setuptools==59.8.0" "numpy==1.23.5" "scipy==1.9.3" "Cython==0.29.36" wheel
+# install project-specified dependencies
+pip install -r requirements/default.txt -r requirements/test.txt
+
+# building the project
+python3 setup.py build_ext --inplace -j 2
+
+# running tests. Note: you may also have to set the following environment variable
+# to suppress irrelevant test failures:
+export SKIMAGE_TEST_STRICT_WARNINGS=0
+python3 -m pytest skimage/feature/tests/test_peak.py -v
+# this runs only the tests defined for the peak_local_max function. Running other project tests can be done using
+python3 -m pytest skimage -q
+```
+
+=== Your task ===
+Fix peak_local_max so that no two coordinates it returns are ever closer than min_distance
+apart, measured by the metric defined above (the maximum per-axis absolute difference).
+
+Precise requirements the solution must satisfy:
+- When `labels` is not used, no two returned coordinates may be closer than min_distance apart
+  by the metric above. This must hold for every case, not only the cases that already work
+  today. (For the labeled case, see the `labels` requirement below.)
+- The fix must not achieve spacing by discarding legitimate results. Every region of the image
+  that contains one or more qualifying maxima must still contribute at least one
+  coordinate to the output and must never be dropped entirely. When several
+  qualifying candidates lie within min_distance of one another, it does not matter which single
+  one of them is kept. Any one representative is acceptable. A region larger than min_distance
+  may legitimately contribute more than one coordinate, as long as the spacing guarantee above
+  is respected between all returned coordinates.
+- All currently correct behavior must be preserved:
+  - A strictly lower-intensity candidate within min_distance of a strictly higher one must
+    remain suppressed, as it is today.
+  - num_peaks, threshold_abs, threshold_rel, and exclude_border must continue to behave exactly
+    as they do today.
+  - The labels parameter must continue to restrict peak search to each labeled region as it
+    does today, and must additionally satisfy all of the following:
+    - Within each labeled region, the spacing guarantee above must hold: no two returned
+      coordinates that come from the same region may be closer than min_distance apart. (Peaks
+      belonging to different regions are independent of one another and need not respect
+      min_distance across regions.)
+    - Label values are arbitrary positive integers. They need not be consecutive and need not
+      start at 1. Every region identified by a distinct positive label value must be searched
+      correctly regardless of the specific integer values used. Zero remains reserved for
+      background.
+    - The call must not modify the caller's input arrays. In particular, the `labels` array
+      passed by the caller must be left unchanged after the call returns.
+  - The function must continue to work correctly for images of any dimensionality it currently
+    supports, not only 2D.
+- The public function signature (parameter names, order, and defaults) must not change.
+
+Testing policy:
+- See above for how to run the tests defined for the subject function, as well as all tests in
+  the project.
+- It is OK for not all tests to pass after implementing the problem solution. After all, these 
+  tests do not take into account the newly created/modified functionality. Therefore, ignore test
+  failures as a means of testing validity, rely instead on the provided reproduction scripts 
+  and the requirements outlined in the section above.
+
+
+
+
+
+
+
+# Problem Checker Results
+
+## Guideline 1: Realistic and representative
+**Passes.**
+
+The problem describes a genuine bug in `peak_local_max` where `min_distance` is not enforced for equal-valued plateaus, and where the `labels` array is mutated in-place. Both bugs are clearly present in the current code (`skimage/feature/peak.py`). The `min_distance` issue stems from the maximum filter approach only marking candidates without a subsequent suppression step. The `labels` mutation occurs on line 226 where `labels[mask] = ...` writes directly into the caller's array. These are realistic bugs that a developer working on this library would encounter and fix.
+
+## Guideline 2: Requires codebase engagement
+**Passes.**
+
+Solving this problem requires understanding how `peak_local_max` is implemented, including the `_get_peak_mask` helper, the maximum filter approach, the labels code path with `rank_order`, and how the various parameters interact. The agent must find and modify the existing code in `skimage/feature/peak.py` while preserving all existing correct behavior (threshold handling, border exclusion, `num_peaks`, multi-dimensional support, etc.). This cannot be solved without engaging deeply with the codebase.
+
+## Guideline 3: Programmatically testable requirements
+**Passes.**
+
+All requirements are programmatically testable:
+- **min_distance enforcement**: For any pair of returned coordinates, verify that the Chebyshev distance is >= `min_distance`. The problem provides a concrete reproduction script.
+- **No legitimate results discarded**: Verify that each qualifying region contributes at least one coordinate.
+- **Preserved existing behavior**: Existing tests cover `num_peaks`, `threshold_abs`, `threshold_rel`, `exclude_border`, and the currently correct suppression of lower-intensity peaks.
+- **Labels requirements**: Per-region spacing can be verified programmatically. Non-mutation can be tested by comparing the labels array before and after the call (with non-consecutive label values to trigger the buggy path). Correct handling of arbitrary positive label integers is testable.
+- **Function signature unchanged**: Can be verified via `inspect.signature`.
+- **N-dimensional support**: Can be tested with 3D/4D arrays.
+
+## Guideline 4: Self-contained
+**Passes.**
+
+The problem statement provides:
+- Clear description of the bugs with reproduction scripts
+- The metric used for distance (Chebyshev / L-infinity)
+- Complete environment setup instructions (venv, dependencies, build, test commands)
+- Precise requirements for what the fix must satisfy
+- Information about which tests to run and how to interpret results
+
+The agent has everything needed to understand, reproduce, fix, and verify the bugs.
+
+---
+
+## Overall Assessment
+**The problem passes all four guidelines.** You can proceed.
+
+
+
+
+
+# FAILURE 1
+The model produced logic that leads to incorrect output for calls to the (fixed) peak_local_max
+function. In particular, a bug occurs when the function peak_local_max is called without a `labels`
+argument, but with `num_peaks` set to some value:
+
+def test_num_peaks_after_tie_resolution(self):
+  image = np.zeros((30, 200))
+  for s in (5, 40, 75, 110, 145):
+      image[15, s:s + 8] = 5.0
+  all_peaks = peak.peak_local_max(image, min_distance=10)
+  assert len(all_peaks) == 5
+  capped = peak.peak_local_max(image, min_distance=10, num_peaks=3)
+  assert len(capped) == 3 # ERROR: returns only 2 peaks
+
+The documentation of the num_peaks parameter dictates that this should limit the number of eligible peaks returned. 
+In particular, this should limit the number of reported peaks, that satisfy the threshold/mask/distance requirements, as per the docstring:
+
+"num_peaks -- Maximum number of peaks. When the number of peaks exceeds num_peaks, return num_peaks 
+peaks based on highest peak intensity.".  
+
+Therefore, the returned peaks list should be truncated only AFTER the distance filter is applied. 
+The model did not respect this constraint when considering the following requirement: 
+
+"num_peaks, threshold_abs, threshold_rel, and exclude_border must continue to behave exactly as they do today." 
+
+The model instead produced code where the list of peaks is truncated first, and then the distance requirement is enforced.
+The source of this issue can be found in the following code (peak.py):
+
+# Select highest intensities (num_peaks)
+    coordinates = _get_high_intensity_peaks(image, mask, num_peaks)
+    
+# Enforce min_distance spacing
+if min_distance > 0 and len(coordinates) > 0:
+    coordinates = _ensure_spacing(coordinates, image, min_distance)
+
+These two steps should be reversed, so that the peak list is truncated after the distance requirement is checked.
+
+# FAILURE 2
+The second failure has to do with large plateaus. The objective of the peak_local_max function and its distance parameter is to return local maxima (pixel coordinates) that are `distance` pixels apart.
+This means that if there is a plateau (island of pixels with identical intensities, that are locally maximal) in the image, that spans MORE than `distance` pixels, the code should return more than one 
+coordinate for this plateau. Currently, it does not, and it folds the plateau into one reported peak for the whole region. 
+
+This violates the requirement that states that 
+
+"A region larger than min_distance may more than one coordinate, as long as the spacing guarantee above is respected between all returned coordinates."
+
+Although the use of the word "may" is slightly ambiguous, I believe that given the context of the surrounding requirements, as well as the semantics of the current implementation,
+this can be reasonably interpreted as "a region may (and in fact should) contribute more than one coordinate, ...".
+
+# FAILURE 3
+This is a programmatical error, which violates that "num_peaks should continue to work as it currently does". The agent should have implemented peak_local_max such that 
+without providing an explicit num_peaks parameter, the number of peaks is always either all valid peaks (given additional filters, e.g. distance). Instead, the agent code leads to the bizarre situation where
+without capping the number of reported peaks (i.e. num_peaks is not provided -> defaults to inf) it produces fewer peaks than when a cap is set (e.g. 2). The cause of this is the premature truncation of the 
+peaks list before checking for distance, and the fact that large regions (> distance) produce only one peak. Fixing these two bugs fixes this emergent bug.
+
+
+
+
+
+The tests were mostly correct, but failed to catch the two model failures described above. Additionally, it did not check for Chebyshev vs Euclidian distance.
+The tests also did not test whether the original behavior for the method parameters was preserved. Exclude border was not tested. Additionally, the exclude_border parameter may be a tuple, but this is not tested.
+
+I added tests for the cases of missing coverage.
+
+
+
+
+test_num_peaks_caps_resolved_peaks_not_raw_candidates: under-reports the number of peaks, because truncation occurs before distance checks
+
+test_long_plateau_yields_multiple_spaced_peaks: plateaus are always collapsed into one peak, rather than contributing more when they span >distance pixels
+
+test_long_plateau_within_label_yields_multiple: same reason as the one above, this bug also occurs within labels
+
+test_large_block_plateau_yields_multiple: same bug as the one above
+
+
+
+
